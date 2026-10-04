@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    name: check (Emacs ${{ matrix.emacs }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        emacs: ['29.1', '29.4', '30.1']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs }}
+      # Compile with warnings as errors; lint the smoke scenario.
+      - run: make check
+
+  record-linux:
+    name: record (Linux, headless)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Emacs with Cairo, Xvfb, ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends emacs-gtk xvfb ffmpeg fonts-dejavu-core
+      # Xvfb started directly: xvfb-run can hang waiting for it.
+      - name: Record the smoke test
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 -nolisten tcp &
+          sleep 1
+          export DISPLAY=:99
+          make doctor
+          make smoke
+          duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out/smoke.mp4)
+          echo "out/smoke.mp4: ${duration}s"
+          awk -v d="$duration" 'BEGIN { exit !(d > 3) }'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-linux
+          path: out/
+
+  wincap:
+    name: wincap builds (macOS)
+    # Recording itself can't run here: CI can't grant Screen Recording.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swiftc -O -swift-version 5 -o wincap wincap.swift
